@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 import os
 import json
 
+from api.models.evaluation_response import ParsedSection, EvaluationResponse
 from api.utils.file_loader import load_document
 from api.utils.llm_loader import load_llm
 from api.prompts.prompt_resume_jd import job_description_parser_prompt, resume_parser_prompt
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Resume Match API")
 
+
 # Asynchronous file saving with logging
 async def save_file(upload_file: UploadFile, file_path: str):
     start_time = time.time()
@@ -26,17 +28,19 @@ async def save_file(upload_file: UploadFile, file_path: str):
     end_time = time.time()
     logger.info(f"File saved: {upload_file.filename} in {end_time - start_time:.2f} seconds")
 
+
 # Extract structured data (with better prompts for quality)
 
 def extract_fields(text, role, llm):
     start_time = time.time()
-    if role== "resume":
+    if role == "resume":
         result = llm(resume_parser_prompt(text)).strip()
     else:
         result = llm(job_description_parser_prompt(text)).strip()
     end_time = time.time()
     logger.info(f"Extracted fields for {role} in {end_time - start_time:.2f} seconds")
     return result
+
 
 # Evaluate how well resume matches the job description
 def evaluate_match(resume_info, jd_info, llm):
@@ -46,15 +50,18 @@ def evaluate_match(resume_info, jd_info, llm):
     logger.info(f"Evaluated match in {end_time - start_time:.2f} seconds")
     return result
 
-def safe_parse_json(raw_text, label):
+
+def safe_parse_json(raw_text: str, label: str) -> ParsedSection:
     try:
-        return json.loads(raw_text)
+        parsed = json.loads(raw_text)
+        return ParsedSection(data=parsed)
     except json.JSONDecodeError as e:
-        return {
-            "error": f"Failed to parse {label} as JSON",
-            "raw_text": raw_text.strip(),
-            "exception": str(e)
-        }
+        return ParsedSection(
+            error=f"Failed to parse {label} as JSON",
+            raw_text=raw_text.strip(),
+            exception=str(e)
+        )
+
 
 # Main API endpoint
 @app.post("/match", summary="Evaluate Resume vs Job Description")
@@ -98,11 +105,13 @@ async def match_resume_and_jd(
         end_time = time.time()
         logger.info(f"Total time taken for API call: {end_time - start_time:.2f} seconds")
 
-        return JSONResponse({
-            "resume_info": safe_parse_json(resume_info, "resume_info"),
-            "job_description_info": safe_parse_json(jd_info, "job_description_info"),
-            "evaluation": safe_parse_json(evaluation, "evaluation")
-        })
+        response = EvaluationResponse(
+            resume_info=safe_parse_json(resume_info, "resume_info"),
+            job_description_info=safe_parse_json(jd_info, "job_description_info"),
+            evaluation=safe_parse_json(evaluation, "evaluation")
+        )
+        return JSONResponse(content=response.model_dump())
+
     finally:
         os.remove(resume_path)
         os.remove(job_path)
